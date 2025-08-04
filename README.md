@@ -1,44 +1,72 @@
-# Cache Deception Scanner
-
+### Cache Deception Scanner
 A Burp Suite extension for detecting cache deception vulnerabilities in web applications.
 
-## Overview
-The **Cache Deception Scanner** is a Burp Suite extension designed to help security researchers and penetration testers identify cache deception vulnerabilities in web applications. This extension provides a custom request editor tab to visualize and analyze potential issues.
+#### Overview
 
-## Features
+The **Cache Deception Scanner** is a Burp Suite extension designed to help security researchers and penetration testers identify cache deception vulnerabilities. This extension provides a custom request editor tab to visualize and analyze HTTP traffic for indicators of cache deception.
+
+#### Features
+
 - Custom request editor tab for analyzing HTTP requests.
-- Automated scanning for cache deception vulnerabilities.
-- User-friendly interface with detailed vulnerability reporting.
+- Automated passive detection of cache deception issues.
+- Clean interface with detailed vulnerability information.
 
-## Prerequisites
-- [Burp Suite](https://portswigger.net/burp) (Professional or Community Edition)
+#### Prerequisites
+
+- Burp Suite (Community or Professional Edition)
 - Java Development Kit (JDK) 11 or higher
 - Gradle (for building from source)
 
-## Installation
+#### Installation
 
-### Option 1: Download Pre-built JAR (Recommended)
-1. Go to the [Releases](https://github.com/Nowafen/cache-deception-scanner/releases) section of this repository.
+##### Option 1: Download Pre-built JAR (Recommended)
+
+1. Visit the [Releases](https://github.com/Nowafen/cache-deception-scanner/releases) section of this repository.
 2. Download the latest `wcd.jar` file.
-3. Open Burp Suite, go to the **Extensions** tab, and click **Add**.
-4. Select **Java** as the extension type, then browse and select the downloaded `wcd.jar` file.
+3. Open Burp Suite and navigate to the **Extender** tab.
+4. Click **Add**, select **Java** as the extension type, and choose the downloaded `wcd.jar`.
 5. Click **Next** to load the extension.
 
-### Option 2: Build from Source
-If you want to build the extension yourself or modify the source code:
+##### Option 2: Build from Source
+
 1. Clone the repository:
    ```bash
    git clone https://github.com/Nowafen/cache-deception-scanner.git
+   cd cache-deception-scanner
+   ```
 
-2. Build the project using Gradle:
+2. Build using Gradle:
+   ```bash
+   gradle build
+   ```
+
+3. The compiled `wcd.jar` file will be located at:
+   ```
+   build/libs/wcd.jar
+   ```
+
+4. Load the JAR file into Burp Suite as described in Option 1.
+
+#### Usage
+
+After loading the extension, a new tab titled **Cache Deception Scanner** will appear in the HTTP request editor.
+
+- Send or forward requests to Burp Suite.
+- The extension will analyze requests and highlight potential cache deception issues.
+- Vulnerability indicators and relevant metadata will be shown within the custom editor tab.
+
+#### Project Structure
+
 ```
-gradle build
+.
+├── src/                   # Java source code
+├── build.gradle           # Gradle build script
+├── build/libs/wcd.jar     # Compiled output (ignored in repo)
+├── README.md              # This file
+├── .gitignore             # Git ignore rules
 ```
-The compiled wcd.jar file will be located in the build/libs/ directory.
-Load the wcd.jar file in Burp Suite as described in Option 1.
 
-##### Usage
+#### License
 
-After loading the extension, a new tab called Cache Deception Scanner will appear in Burp Suite's request editor.
-Send HTTP requests to the extension for analysis.
-The extension will highlight potential cache deception vulnerabilities and provide details in the custom tab.
+This project is open-source and released under the MIT License.
+```
