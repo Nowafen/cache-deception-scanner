@@ -11,12 +11,6 @@ The **Cache Deception Scanner** is a Burp Suite extension designed to help secur
 - Automated passive detection of cache deception issues.
 - Clean interface with detailed vulnerability information.
 
-#### Prerequisites
-
-- Burp Suite (Community or Professional Edition)
-- Java Development Kit (JDK) 11 or higher
-- Gradle (for building from source)
-
 #### Installation
 
 ###### Option 1: Download Pre-built JAR (Recommended)
