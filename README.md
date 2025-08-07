@@ -1,5 +1,6 @@
 ### Cache Deception Scanner
 A Burp Suite extension for detecting cache deception vulnerabilities in web applications.
+###### Latest version: 1.1
 
 #### Overview
 
@@ -34,7 +35,7 @@ The **Cache Deception Scanner** is a Burp Suite extension designed to help secur
    ```
 3. The compiled `wcd.jar` file will be located at:
    ```
-   build/libs/wcd.jar
+   build/libs/WCDScanner-1.1.jar
    ```
 4. Load the JAR file into Burp Suite as described in Option 1.
 
