@@ -1,5 +1,8 @@
 package example.customrequesteditortab;
 
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import burp.api.montoya.BurpExtension;
 import burp.api.montoya.MontoyaApi;
 import burp.api.montoya.core.ByteArray;
@@ -44,11 +47,48 @@ import java.util.Map;
 import java.util.Set;
 import java.util.Timer;
 import java.util.TimerTask;
+import burp.api.montoya.persistence.PersistedObject;
+
+class PacketInfo {
+    private final String url;
+    private final String method;
+    private final String payload;
+    private final String originalPath;
+    private final int statusCode;
+    private final int length;
+    private final String time;
+    private final String vulnerabilityStatus;
+    private final String storageKey; 
+
+    public PacketInfo(String url, String method, String payload, String originalPath, int statusCode, 
+                      int length, String time, String vulnerabilityStatus, String storageKey) {
+        this.url = url;
+        this.method = method;
+        this.payload = payload;
+        this.originalPath = originalPath;
+        this.statusCode = statusCode;
+        this.length = length;
+        this.time = time;
+        this.vulnerabilityStatus = vulnerabilityStatus;
+        this.storageKey = storageKey;
+    }
+
+    public String getUrl() { return url; }
+    public String getMethod() { return method; }
+    public String getPayload() { return payload; }
+    public String getOriginalPath() { return originalPath; }
+    public int getStatusCode() { return statusCode; }
+    public int getLength() { return length; }
+    public String getTime() { return time; }
+    public String getVulnerabilityStatus() { return vulnerabilityStatus; }
+    public String getStorageKey() { return storageKey; }
+}
 
 /**
  * Main class for the WCD Scanner Burp extension.
  */
 public class CustomRequestEditorTab implements BurpExtension {
+    private ExecutorService executorService;
     private MontoyaApi api;
     private JPanel mainPanel;
     private JTree domainTree;
@@ -57,11 +97,11 @@ public class CustomRequestEditorTab implements BurpExtension {
     private Map<String, Set<String>> domainTreeData = new HashMap<>();
     private JTable logTable;
     private DefaultTableModel logModel;
-    private List<HttpRequestResponse> packetList = new ArrayList<>();
+    private List<PacketInfo> packetList = new ArrayList<>();
     private RawEditor requestEditor, responseEditor;
     private JSplitPane detailPane;
     private HttpRequestResponse requestResponse;
-    private Map<String, List<HttpRequestResponse>> domainPackets = new HashMap<>();
+    private Map<String, List<PacketInfo>> domainPackets = new HashMap<>();
     private JPanel domainPanel;
     private String searchText = "";
     private String statusFilter = "All";
@@ -92,6 +132,7 @@ public class CustomRequestEditorTab implements BurpExtension {
     private boolean proxy = true;
     private boolean scanner = true;
     private boolean intruder = true;
+    private PersistedObject extensionData;
     private boolean repeater = true;
     private boolean sequencer = true;
     private boolean extensions = true;
@@ -112,7 +153,23 @@ public class CustomRequestEditorTab implements BurpExtension {
     @Override
     public void initialize(MontoyaApi api) {
         this.api = api;
+        this.executorService = Executors.newFixedThreadPool(5); 
+        this.extensionData = api.persistence().extensionData();
         api.extension().setName("WCD Scanner");
+
+        
+        api.extension().registerUnloadingHandler(() -> {
+            try {
+                executorService.shutdown(); 
+                if (!executorService.awaitTermination(5, TimeUnit.SECONDS)) {
+                    executorService.shutdownNow(); 
+                    api.logging().logToOutput("Some threads did not terminate in time during unload.");
+                }
+                api.logging().logToOutput("Extension unloaded successfully, all threads terminated.");
+            } catch (InterruptedException e) {
+                api.logging().logToError("Error during extension unload: " + e.getMessage());
+            }
+        });
 
         api.userInterface().registerHttpRequestEditorProvider(new MyHttpRequestEditorProvider(api));
 
@@ -130,21 +187,11 @@ public class CustomRequestEditorTab implements BurpExtension {
         rootNode.removeAllChildren();
 
         for (String domain : domainTreeData.keySet()) {
-            DefaultMutableTreeNode domainNode = new DefaultMutableTreeNode(domain);
-            domainNode.setUserObject(new DomainNode(domain, true)); 
+            DefaultMutableTreeNode domainNode = new DefaultMutableTreeNode(new DomainNode(domain, true));
             rootNode.add(domainNode);
-
-        
-            Set<String> subdomains = domainTreeData.get(domain);
-            if (subdomains != null) {
-                for (String subdomain : subdomains) {
-                    domainNode.add(new DefaultMutableTreeNode(new DomainNode(subdomain, false)));
-                }
-            }
         }
 
         domainTreeModel.reload();
-        expandAllTreeNodes(domainTree);
     }
 
     /**
@@ -170,7 +217,7 @@ public class CustomRequestEditorTab implements BurpExtension {
                 }
             }
             domainTreeModel.reload(domainNode);
-            expandAllTreeNodes(domainTree);
+            domainTree.expandPath(new TreePath(domainNode.getPath()));
         }
     }
 
@@ -212,12 +259,11 @@ public class CustomRequestEditorTab implements BurpExtension {
                         if (e.getClickCount() == 2) {
                             showDomainActionsTab(selectedDomain);
                         } else if (e.getClickCount() == 1) {
-                            if (domainTreeData.containsKey(selectedDomain)) {
+                            if (nodeData.isRoot()) {
                                 expandDomainTree(selectedDomain);
                             }
                             lastSelectedDomain = selectedDomain;
                             updateLogTableForDomain(selectedDomain);
-
                         }
                     }
                 }
@@ -302,13 +348,21 @@ public class CustomRequestEditorTab implements BurpExtension {
 
         requestEditor = api.userInterface().createRawEditor(EditorOptions.READ_ONLY);
         responseEditor = api.userInterface().createRawEditor(EditorOptions.READ_ONLY);
-        JPanel requestResponsePanel = new JPanel(new BorderLayout());
-        requestResponsePanel.add(requestEditor.uiComponent(), BorderLayout.CENTER);
+        JPanel requestPanel = new JPanel(new BorderLayout());
+        requestPanel.add(new JLabel("Request", JLabel.CENTER), BorderLayout.NORTH);
+        requestPanel.add(requestEditor.uiComponent(), BorderLayout.CENTER);
 
         JPanel responsePanel = new JPanel(new BorderLayout());
+        responsePanel.add(new JLabel("Response", JLabel.CENTER), BorderLayout.NORTH);
         responsePanel.add(responseEditor.uiComponent(), BorderLayout.CENTER);
 
-        detailPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, logPanel, new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, requestResponsePanel, responsePanel));
+        JSplitPane requestResponseSplitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, requestPanel, responsePanel);
+        requestResponseSplitPane.setDividerLocation(0.5);
+        requestResponseSplitPane.setResizeWeight(0.5);
+        requestResponseSplitPane.setOneTouchExpandable(true);
+        requestResponseSplitPane.setDividerSize(10);
+
+        detailPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, logPanel, requestResponseSplitPane);
         detailPane.setDividerLocation(0.5);
         detailPane.setResizeWeight(0.5);
         detailPane.setOneTouchExpandable(true);
@@ -475,9 +529,15 @@ public class CustomRequestEditorTab implements BurpExtension {
      * Deletes all packets for a subdomain and removes it from the tree.
      */
     private void deleteSubdomainPackets(String subdomain) {
-        domainPackets.remove(subdomain);
+        List<PacketInfo> packets = domainPackets.remove(subdomain);
+        if (packets != null) {
+            for (PacketInfo packet : packets) {
+                extensionData.deleteByteArray(packet.getStorageKey() + "_request");
+                extensionData.deleteByteArray(packet.getStorageKey() + "_response");
+            }
+        }
         packetList.removeIf(p -> {
-            String url = p.request().url().toString();
+            String url = p.getUrl();
             String host = url.contains("://") ? url.split("/")[2].split(":")[0] : "N/A";
             return host.equals(subdomain);
         });
@@ -809,6 +869,65 @@ public class CustomRequestEditorTab implements BurpExtension {
         return true;
     }
 
+
+    private boolean applyFilters(PacketInfo packetInfo) {
+        String method = packetInfo.getMethod();
+        int statusCode = packetInfo.getStatusCode();
+        String host = packetInfo.getUrl().contains("://") ? packetInfo.getUrl().split("/")[2].split(":")[0] : "N/A";
+
+        if (!searchText.isEmpty()) {
+            ByteArray responseBytes = extensionData.getByteArray(packetInfo.getStorageKey() + "_response");
+            if (responseBytes != null) {
+                String responseBody = new String(responseBytes.getBytes());
+                if (!responseBody.contains(searchText)) {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+
+        if (!statusFilter.equals("All")) {
+            String statusStr = String.valueOf(statusCode).substring(0, 1) + "xx";
+            if (!statusFilter.contains(statusStr)) return false;
+        }
+
+        if (inScope || noResponse || parameterized) {
+            if (noResponse && extensionData.getByteArray(packetInfo.getStorageKey() + "_response") == null) return false;
+        }
+
+        ByteArray responseBytes = extensionData.getByteArray(packetInfo.getStorageKey() + "_response");
+        String contentType = "";
+        if (responseBytes != null) {
+            HttpResponse response = HttpResponse.httpResponse(responseBytes);
+            contentType = response.headers().stream()
+                .filter(header -> "Content-Type".equalsIgnoreCase(header.name()))
+                .findFirst()
+                .map(HttpHeader::value)
+                .orElse("");
+        }
+
+        boolean isHtml = contentType.contains("text/html");
+        boolean isScript = contentType.contains("application/javascript") || contentType.contains("text/javascript");
+        boolean isXml = contentType.contains("application/xml") || contentType.contains("text/xml");
+        boolean isCss = contentType.contains("text/css");
+        boolean isOtherText = contentType.contains("text/") && !isHtml && !isXml && !isCss;
+        boolean isImage = contentType.contains("image/");
+        boolean isFlash = contentType.contains("application/x-shockwave-flash");
+        boolean isOtherBinary = !contentType.contains("text/") && !isImage && !isFlash;
+
+        if (!html && isHtml) return false;
+        if (!script && isScript) return false;
+        if (!xml && isXml) return false;
+        if (!css && isCss) return false;
+        if (!otherText && isOtherText) return false;
+        if (!images && isImage) return false;
+        if (!flash && isFlash) return false;
+        if (!otherBinary && isOtherBinary) return false;
+
+        return true;
+    }
+
     /**
      * Adds a packet to the extension and performs fuzzing.
      */
@@ -816,6 +935,7 @@ public class CustomRequestEditorTab implements BurpExtension {
         setTabColor(Color.ORANGE);
         Logging logging = api.logging();
         String[] payloads = {
+            
             ".js", ".css", "/1.css", "/foo.js?foo.png", "/;.js", "/min.js", "/robots.txt", "%2Fxyz.js",
             "?_debug=1.css", "/../style.css", "/%20test.css", "?cb=main.js", "/js/tracking.js", ";test.png",
             ";abcd.js", "/wcd.js", "%2ftest%3fabcd.js", "/%2ftest%3fmain.js", ".html", ".php",
@@ -827,7 +947,77 @@ public class CustomRequestEditorTab implements BurpExtension {
             "%2ftest%2easp?cb=1", "/%2e%2e%2fbackup%2ezip", "/fonts%2ewoff2", "?file=../../config%2etmp",
             "/%26script%2ejs", ";%23%2f%2e%2e%2fdata.csv?wcd", "/test%2emp4", "/%2f%2e%2e%2farchive.tar.gz?id",
             "%3c%2fscript%3e?tracking.js", "/%09style%2ecss", "/%00test%2epng", "/assets%2efake.js",
-            "#config.json", "/%2f%2e%2e%2fresources%2eatom", "?v=prod%2ewoff", "/%5ctest%2e7z"
+            "#config.json", "/%2f%2e%2e%2fresources%2eatom", "?v=prod%2ewoff", "/%5ctest%2e7z",
+            
+
+            "/resource/../../../MainPath/;.js",
+            "/resources/..%2fmy-account?wcd",
+            "/js/../../MainPath?abcd.css",
+            "/resource/_/../../MainPath/js;main.js",
+            "/resources/..%2fMainPath",
+            "/resources/..%2f..%2fMainPath",
+            "/resources/%2e%2e%2fMainPath",
+            "/resources/%2e%2e/MainPath",
+            "/resources/%2e%2e//MainPath",
+            "/resources/..%252fMainPath",
+            "/resources/..%c0%afMainPath",
+            "/resources/..%5cMainPath",
+            "/resources/%2e%2e\\MainPath",
+            "/resources/..;/MainPath",
+            "/resources/.%2e/MainPath",
+            "/resources/%252e%252e%252fMainPath",
+            "/resources/%ef%bc%8f../MainPath",
+            "/resources/MainPath%00.js",
+            "/resources/MainPath.js?",
+            "/resources/MainPath.js?fake=1",
+            "/resources/MainPath.js#.",
+            "/resources/MainPath.js/.",
+            "/resources/.js/../MainPath",
+            "/resources/.css/../MainPath",
+            "/static/..%2fMainPath",
+            "/static/%2e%2e/%2e%2e/MainPath",
+            "/static/..;/MainPath",
+            "/static/..%2f..%2fMainPath",
+            "/static/..%5c..%5cMainPath",
+            "/static/%2e%2e%5cMainPath",
+            "/assets/..%2fMainPath",
+            "/assets/%2e%2e/%2e%2e/MainPath",
+            "/assets/..;/MainPath",
+            "/assets/..%5cMainPath",
+            "/assets/%2e%2e%2fMainPath.js",
+            "/assets/.js/../MainPath",
+            "/assets/..%2fMainPath?cache=1",
+            "/public/..%2fMainPath",
+            "/public/%2e%2e/%2e%2e/MainPath",
+            "/public/..;/MainPath",
+            "/public/.js/../MainPath",
+            "/public/..%2fMainPath.js",
+            "/cdn/..%2fMainPath",
+            "/cdn/%2e%2e/%2e%2e/MainPath",
+            "/cdn/..;/MainPath",
+            "/cdn/.js/../MainPath",
+            "/cdn/..%2fMainPath.js?version=1.2.3",
+            "/resources/%2e%2e/%2e%2e/%2e%2e/MainPath",
+            "/resources/..%2f..%2f..%2fMainPath",
+            "/resources///../MainPath",
+            "/resources/..//MainPath",
+            "/resources/%2e%2e/./MainPath",
+            "/resources/%2e%2e%2f./MainPath",
+            "/resources/%2e%2e%2fMainPath?wcd",
+            "/resources/%2e%2e%2fMainPath?static=true",
+            "/resources/%2e%2e%2fMainPath&forcecache=1",
+            "/resources/%2e%2e%2fMainPath#static",
+            "/resources/%2e%2e%2fMainPath.js&nocache=false",
+            "/resources/%2e%2e%2fMainPath.js?v=9999",
+            "/resources/%2e%2e%2fMainPath.css",
+            "/resources/%2e%2e%2fMainPath.png",
+            "/resources/%2e%2e%2fMainPath.jpg",
+            "/resources/%2e%2e%2fMainPath.svg",
+            "/resources/%2e%2e%2fMainPath.txt",
+            "/static/../MainPath",
+            "/assets/../MainPath",
+            "/public/../MainPath",
+            "/cdn/../MainPath"
         };
         HttpRequest originalRequest = requestResponse.request();
         String urlStr = originalRequest.url().toString();
@@ -841,19 +1031,22 @@ public class CustomRequestEditorTab implements BurpExtension {
             if (actualHost != null && !actualHost.isEmpty()) {
                 tempFullHost = actualHost;
             }
-   
-            String[] hostParts = tempFullHost.split("\\.");
-            if (hostParts.length > 2) {
-                domainTreeData.computeIfAbsent(domain, k -> new LinkedHashSet<>()).add(tempFullHost);
-            } else {
-                domainTreeData.computeIfAbsent(domain, k -> new LinkedHashSet<>()).add(tempFullHost);
+
+            
+            domainTreeData.computeIfAbsent(domain, k -> new LinkedHashSet<>());
+
+            
+            if (!tempFullHost.equalsIgnoreCase(domain)) {
+                domainTreeData.get(domain).add(tempFullHost);
             }
+
         } catch (Exception e) {
             api.logging().logToError("✘ URL parse error: " + originalRequest.url().toString());
         }
+
         final String finalFullHost = tempFullHost;
 
-        SwingUtilities.invokeLater(() -> refreshDomainTree()); 
+        SwingUtilities.invokeLater(() -> refreshDomainTree());
 
         byte[] originalBytes = originalRequest.toByteArray().getBytes();
         String requestFullStr = new String(originalBytes);
@@ -862,7 +1055,7 @@ public class CustomRequestEditorTab implements BurpExtension {
         logging.logToOutput(requestFullStr);
 
         final MontoyaApi apiInstance = this.api;
-        new Thread(() -> {
+        executorService.submit(() -> {
             Logging threadLogging = apiInstance.logging();
             threadLogging.logToOutput("[Thread] Starting fuzzing process for domain: " + domain);
 
@@ -879,31 +1072,26 @@ public class CustomRequestEditorTab implements BurpExtension {
 
             threadLogging.logToOutput("[Thread] HTTP service is available.");
 
-            int requestLineEnd = requestFullStr.indexOf("\r\n");
-            if (requestLineEnd == -1) {
-                threadLogging.logToError("[Thread] Invalid request: no CRLF in request-line.");
-                return;
-            }
-
-            String requestLine = requestFullStr.substring(0, requestLineEnd);
-            String restOfRequest = requestFullStr.substring(requestLineEnd);
-
+            String requestLine = requestFullStr.substring(0, requestFullStr.indexOf("\r\n"));
+            String restOfRequest = requestFullStr.substring(requestFullStr.indexOf("\r\n"));
             String[] requestLineParts = requestLine.split(" ", 3);
-            if (requestLineParts.length < 2) {
-                threadLogging.logToError("[Thread] Invalid request-line format.");
-                return;
-            }
-
             String httpVersion = requestLineParts.length > 2 ? requestLineParts[2] : "HTTP/1.1";
 
             String[] methods = {"GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH", "TRACE"};
             boolean[] methodEnabled = {getMethod, postMethod, putMethod, deleteMethod, headMethod, optionsMethod, patchMethod, traceMethod};
 
+            SimpleDateFormat sdf = new SimpleDateFormat("HH:mm:ss.SSS");
+
             for (int i = 0; i < methods.length; i++) {
                 final int finalI = i;
                 if (methodEnabled[finalI]) {
                     for (String payload : payloads) {
-                        String newPath = originalPath + payload;
+                        String newPath;
+                        if (payload.contains("MainPath")) {
+                            newPath = payload.replace("MainPath", originalPath.startsWith("/") ? originalPath.substring(1) : originalPath);
+                        } else {
+                            newPath = originalPath + payload;
+                        }
                         String newRequestLine = methods[finalI] + " " + newPath + " " + httpVersion;
                         String fullFuzzedRequest = newRequestLine + restOfRequest;
 
@@ -917,14 +1105,38 @@ public class CustomRequestEditorTab implements BurpExtension {
                                 String responseStr = new String(fuzzedResponse.response().toByteArray().getBytes());
                                 threadLogging.logToOutput(responseStr);
 
-                                String uniqueKey = fuzzedRequest.url().toString();
+                                String uniqueKey = fuzzedRequest.url().toString() + "#" + methods[finalI] + "#" + payload;
                                 payloadMap.put(uniqueKey, payload);
 
+                                
+                                String storageKey = "packet_" + System.nanoTime() + "_" + finalI + "_" + payload.hashCode();
+                                extensionData.setByteArray(storageKey + "_request", fuzzedResponse.request().toByteArray());
+                                extensionData.setByteArray(storageKey + "_response", fuzzedResponse.response().toByteArray());
+
+                                
+                                String time = sdf.format(new Date(System.currentTimeMillis()));
+                                String effectivePayload = calculateEffectivePayload(originalPath, fuzzedRequest.path(), payload);
+                                int statusCode = fuzzedResponse.response().statusCode();
+                                int length = fuzzedResponse.response().body().length();
+                                String vulnerabilityStatus = getVulnerabilityStatus(fuzzedResponse.response(), statusCode);
+
+                                PacketInfo packetInfo = new PacketInfo(
+                                    fuzzedRequest.url().toString(),
+                                    methods[finalI],
+                                    payload, 
+                                    originalPath,
+                                    statusCode,
+                                    length,
+                                    time,
+                                    vulnerabilityStatus,
+                                    storageKey
+                                );
+
                                 SwingUtilities.invokeLater(() -> {
-                                    packetList.add(fuzzedResponse);
-                                    domainPackets.computeIfAbsent(finalFullHost, k -> new ArrayList<>()).add(fuzzedResponse);
+                                    packetList.add(packetInfo);
+                                    domainPackets.computeIfAbsent(finalFullHost, k -> new ArrayList<>()).add(packetInfo);
                                     if (lastSelectedDomain != null && lastSelectedDomain.equals(finalFullHost)) {
-                                        updateLogTableForDomain(finalFullHost);
+                                        updateLogTable(packetInfo);
                                         int row = logModel.getRowCount() - 1;
                                         if (row >= 0) {
                                             logTable.setRowSelectionInterval(row, row);
@@ -944,8 +1156,10 @@ public class CustomRequestEditorTab implements BurpExtension {
             }
 
             threadLogging.logToOutput("[Thread] Fuzzing process completed for domain: " + domain);
-        }).start();
+        });
     }
+
+    
 
     /**
      * Sets the tab color temporarily.
@@ -992,27 +1206,26 @@ public class CustomRequestEditorTab implements BurpExtension {
     /**
      * Updates the log table with a new response, payload, and method.
      */
-    private void updateLogTable(HttpRequestResponse response, String payload, String method, String originalPath) {
-        if (applyFilters(response) && lastSelectedDomain != null && isSubdomainOrSame(lastSelectedDomain, response.request().url().toString().contains("://") ? response.request().url().toString().split("/")[2].split(":")[0] : "N/A")) {
-            HttpRequest request = response.request();
-            String urlStr = request.url().toString();
-            String host = urlStr.contains("://") ? urlStr.split("/")[2].split(":")[0] : "N/A";
-            String path = request.path();
-            HttpResponse httpResponse = response.response();
-            int statusCode = httpResponse != null ? httpResponse.statusCode() : 0;
-            int length = httpResponse != null ? httpResponse.body().length() : 0;
-            SimpleDateFormat sdf = new SimpleDateFormat("HH:mm:ss.SSS");
-            String time = sdf.format(new Date(System.currentTimeMillis()));
-            String effectivePayload = payloadMap.getOrDefault(urlStr, ""); // گرفتن پیلود از مپ
-            String vulnerabilityStatus = getVulnerabilityStatus(httpResponse, statusCode);
-            int row = logModel.getRowCount();
-
-            
+    private void updateLogTable(PacketInfo packetInfo) {
+        if (applyFilters(packetInfo) && lastSelectedDomain != null && 
+            isSubdomainOrSame(lastSelectedDomain, packetInfo.getUrl().contains("://") ? 
+            packetInfo.getUrl().split("/")[2].split(":")[0] : "N/A")) {
             int domainCounter = domainPacketCounters.computeIfAbsent(lastSelectedDomain, k -> 1);
-            logModel.addRow(new Object[]{domainCounter++, host, path, method, statusCode, length, effectivePayload, time, vulnerabilityStatus});
-            domainPacketCounters.put(lastSelectedDomain, domainCounter);
+            logModel.addRow(new Object[]{
+                domainCounter,
+                packetInfo.getUrl().contains("://") ? packetInfo.getUrl().split("/")[2].split(":")[0] : "N/A",
+                packetInfo.getOriginalPath(), 
+                packetInfo.getMethod(),
+                packetInfo.getStatusCode(),
+                packetInfo.getLength(),
+                packetInfo.getPayload(),
+                packetInfo.getTime(),
+                packetInfo.getVulnerabilityStatus()
+            });
+            domainPacketCounters.put(lastSelectedDomain, domainCounter + 1);
         }
     }
+
 
     /**
      * Updates the log table for a specific domain, including its subdomains.
@@ -1024,33 +1237,18 @@ public class CustomRequestEditorTab implements BurpExtension {
             return;
         }
         logTable.setVisible(true);
-        domainPacketCounters.put(domain, 1); 
+        domainPacketCounters.put(domain, 1);
 
-        List<HttpRequestResponse> allPackets = new ArrayList<>();
-        if (domainTreeData.containsKey(domain)) {
-            allPackets.addAll(domainPackets.getOrDefault(domain, new ArrayList<>()));
-            Set<String> subdomains = domainTreeData.get(domain);
-            for (String subdomain : subdomains) {
-                allPackets.addAll(domainPackets.getOrDefault(subdomain, new ArrayList<>()));
-            }
-        } else {
-            allPackets.addAll(domainPackets.getOrDefault(domain, new ArrayList<>()));
-        }
+        List<PacketInfo> allPackets = domainPackets.getOrDefault(domain, new ArrayList<>());
 
-        for (HttpRequestResponse response : allPackets) {
-            if (applyFilters(response)) {
-                HttpRequest request = response.request();
-                String host = request.url().toString().contains("://") ? request.url().toString().split("/")[2].split(":")[0] : "N/A";
-                String urlStr = request.url().toString();
-                String path = request.path();
-                String originalPath = request.path();
-                String payload = payloadMap.getOrDefault(urlStr, ""); // گرفتن پیلود از مپ
-                int statusCode = response.response() != null ? response.response().statusCode() : 0;
-                String vulnerabilityStatus = getVulnerabilityStatus(response.response(), statusCode);
-                updateLogTable(response, payload, request.method(), originalPath);
+        for (PacketInfo packetInfo : allPackets) {
+            if (applyFilters(packetInfo)) {
+                updateLogTable(packetInfo);
             }
         }
     }
+
+    
 
     /**
      * Checks if a host is a subdomain of the given domain or the same.
@@ -1069,7 +1267,7 @@ public class CustomRequestEditorTab implements BurpExtension {
             String effectivePayload = testPath.substring(originalPath.length());
             return effectivePayload.isEmpty() ? defaultPayload : effectivePayload;
         }
-        return defaultPayload; 
+        return defaultPayload;
     }
 
     /**
@@ -1164,8 +1362,24 @@ public class CustomRequestEditorTab implements BurpExtension {
         private final RawEditor requestEditor = api.userInterface().createRawEditor(EditorOptions.READ_ONLY);
         private final RawEditor responseEditor = api.userInterface().createRawEditor(EditorOptions.READ_ONLY);
         private HttpRequestResponse requestResponse;
+        private final JPanel uiComponent;
 
         public MyExtensionProvidedHttpRequestEditor() {
+            JPanel requestPanel = new JPanel(new BorderLayout());
+            requestPanel.add(new JLabel("Request", JLabel.CENTER), BorderLayout.NORTH);
+            requestPanel.add(requestEditor.uiComponent(), BorderLayout.CENTER);
+
+            JPanel responsePanel = new JPanel(new BorderLayout());
+            responsePanel.add(new JLabel("Response", JLabel.CENTER), BorderLayout.NORTH);
+            responsePanel.add(responseEditor.uiComponent(), BorderLayout.CENTER);
+
+            uiComponent = new JPanel(new BorderLayout());
+            JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, requestPanel, responsePanel);
+            splitPane.setDividerLocation(0.5);
+            splitPane.setResizeWeight(0.5);
+            splitPane.setOneTouchExpandable(true);
+            splitPane.setDividerSize(10);
+            uiComponent.add(splitPane, BorderLayout.CENTER);
         }
 
         @Override
@@ -1194,10 +1408,7 @@ public class CustomRequestEditorTab implements BurpExtension {
 
         @Override
         public Component uiComponent() {
-            JPanel panel = new JPanel(new BorderLayout());
-            panel.add(requestEditor.uiComponent(), BorderLayout.CENTER);
-            panel.add(responseEditor.uiComponent(), BorderLayout.SOUTH);
-            return panel;
+            return uiComponent;
         }
 
         @Override
@@ -1238,25 +1449,39 @@ public class CustomRequestEditorTab implements BurpExtension {
      * Shows packet details in the request/response panel.
      */
     private void showPacketDetails(int row) {
-        if (detailPane != null && row >= 0 && row < packetList.size()) {
-            requestResponse = packetList.get(row);
-            setRequestResponse(requestResponse);
-            detailPane.setDividerLocation(0.5);
-            detailPane.setVisible(true);
-            mainPanel.revalidate();
-            mainPanel.repaint();
+        if (detailPane != null && row >= 0 && row < logModel.getRowCount()) {
+            String selectedDomain = lastSelectedDomain;
+            if (selectedDomain != null) {
+                List<PacketInfo> domainSpecificPackets = domainPackets.getOrDefault(selectedDomain, new ArrayList<>());
+                if (domainTreeData.containsKey(selectedDomain)) {
+                    Set<String> subdomains = domainTreeData.get(selectedDomain);
+                    for (String subdomain : subdomains) {
+                        domainSpecificPackets.addAll(domainPackets.getOrDefault(subdomain, new ArrayList<>()));
+                    }
+                }
+                List<PacketInfo> filteredPackets = new ArrayList<>();
+                for (PacketInfo packetInfo : domainSpecificPackets) {
+                    if (applyFilters(packetInfo)) {
+                        filteredPackets.add(packetInfo);
+                    }
+                }
+                if (row < filteredPackets.size()) {
+                    PacketInfo packetInfo = filteredPackets.get(row);
+                    ByteArray requestBytes = extensionData.getByteArray(packetInfo.getStorageKey() + "_request");
+                    ByteArray responseBytes = extensionData.getByteArray(packetInfo.getStorageKey() + "_response");
+                    if (requestEditor != null && responseEditor != null) {
+                        requestEditor.setContents(requestBytes != null ? requestBytes : ByteArray.byteArray("No request".getBytes()));
+                        responseEditor.setContents(responseBytes != null ? responseBytes : ByteArray.byteArray("No response".getBytes()));
+                    }
+                    detailPane.setDividerLocation(0.5);
+                    detailPane.setVisible(true);
+                    mainPanel.revalidate();
+                    mainPanel.repaint();
+                }
+            }
         }
     }
 
-    /**
-     * Sets the request and response content in the editors.
-     */
-    private void setRequestResponse(HttpRequestResponse requestResponse) {
-        if (requestEditor != null && responseEditor != null) {
-            requestEditor.setContents(requestResponse.request().toByteArray());
-            responseEditor.setContents(requestResponse.response() != null ? requestResponse.response().toByteArray() : ByteArray.byteArray("No response".getBytes()));
-        }
-    }
 
 
     private static class DomainNode {
@@ -1292,9 +1517,10 @@ public class CustomRequestEditorTab implements BurpExtension {
                 if (node.getUserObject() instanceof DomainNode) {
                     DomainNode nodeData = (DomainNode) node.getUserObject();
                     if (nodeData.isRoot()) {
-                        ((JLabel) c).setText("\uD83C\uDF10 " + nodeData.getDomain()); 
+                        String icon = expanded ? "\u25BC " : "\u25B6 "; // ▼ for expanded, ▶ for collapsed
+                        ((JLabel) c).setText(icon + nodeData.getDomain());
                     } else {
-                        ((JLabel) c).setText(nodeData.getDomain()); 
+                        ((JLabel) c).setText(nodeData.getDomain());
                     }
                     ((JLabel) c).setForeground(new Color(200, 200, 200));
                     if (sel) {
