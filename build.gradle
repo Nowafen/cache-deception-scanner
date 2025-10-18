@@ -1,6 +1,5 @@
 plugins {
     id 'java'
-    id 'com.github.johnrengelman.shadow' version '8.1.1'
 }
 
 repositories {
@@ -11,8 +10,7 @@ dependencies {
     implementation 'net.portswigger.burp.extensions:montoya-api:2024.12'
 }
 
-shadowJar {
-    archiveBaseName.set('WCDScanner')
-    archiveClassifier.set('')
-    archiveVersion.set('1.1')
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
 }
