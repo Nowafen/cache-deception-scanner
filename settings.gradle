@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Web-cache-deception-Scanner 1.2"
+rootProject.name = "WCDScanner-1.2"
