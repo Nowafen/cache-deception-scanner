@@ -15,9 +15,9 @@ The **Cache Deception Scanner** is a Burp Suite extension designed to help secur
 - Clean interface with detailed vulnerability information, including reasons for detection (e.g., "Cache-Control: max-age=30").
 - Modular codebase for easier extension and maintenance.
 
-#### Installation
+### Installation
 
-###### Option 1: Download Pre-built JAR (Recommended)
+#### Option 1: Download Pre-built JAR 
 
 1. Visit the [Releases](https://github.com/Nowafen/cache-deception-scanner/releases) section of this repository.
 2. Download the latest `WCDScanner-1.2.jar` file.
@@ -28,7 +28,7 @@ curl -L https://github.com/Nowafen/cache-deception-scanner/releases/download/v1.
 4. Click **Add**, select **Java** as the extension type, and choose the downloaded `WCDScanner-1.2.jar`.
 5. Click **Next** to load the extension.
 
-###### Option 2: Build from Source
+#### Option 2: Build from Source (Recommended)
 
 1. Clone the repository:
    ```bash
