@@ -24,7 +24,7 @@ The **Cache Deception Scanner** is a Burp Suite extension designed to help secur
 ```bash
 curl -L https://github.com/Nowafen/cache-deception-scanner/releases/download/v1.2/WCDScanner-1.2.jar -o WCDScanner-1.2.jar
 ```
-3. Open Burp Suite and navigate to the **Extender** tab.
+3. Open Burp Suite and go to the **Extension** tab.
 4. Click **Add**, select **Java** as the extension type, and choose the downloaded `WCDScanner-1.2.jar`.
 5. Click **Next** to load the extension.
 
