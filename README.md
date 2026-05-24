@@ -2,7 +2,7 @@
 A Burp Suite extension for detecting cache deception vulnerabilities in web applications.
 
 ###### Latest version: 1.2
-###### Created by [MNM](https://x.com/Nowafen)
+###### Created by [MNM](https://x.com/RedTeamElite)
 
 #### Overview
 
